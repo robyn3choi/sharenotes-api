@@ -6,52 +6,73 @@ const MongoClient = require('mongodb').MongoClient;
 const dbUri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.ucwi3.mongodb.net/test?retryWrites=true&w=majority`;
 const client = new MongoClient(dbUri, { useNewUrlParser: true, useUnifiedTopology: true });
 
+let currentNoteValue = null;
+let currentNoteId = '';
+let dbWritePromise;
+
 client.connect((err) => {
   if (err) return console.error(err);
 
-  console.log('Connected to Database');
-
   const db = client.db('sharenotes');
-  const textCollection = db.collection('text');
+  const noteCollection = db.collection('notes');
 
   const app = express();
   app.use(express.json());
 
-  app.get('/', (req, res) => {
-    db.collection('text')
-      .find()
-      .toArray()
-      .then((results) => {
-        res.send(results);
-      })
-      .catch((error) => console.error(error));
-  });
-
-  app.post('/new', (req, res) => {
-    textCollection
-      .insertOne(req.body)
-      .then((result) => {
-        console.log(result);
-        res.redirect('/');
-      })
-      .catch((error) => console.error(error));
+  app.get('/', async (req, res) => {
+    // TODO: find the correct document when we have more than one
+    try {
+      await dbWritePromise;
+      const notes = await noteCollection.find().toArray();
+      if (notes.length) {
+        currentNoteId = notes[0]._id;
+        currentNoteValue = currentNoteValue || notes[0].value;
+      }
+      res.send({ value: currentNoteValue });
+    } catch (err) {
+      console.error(err);
+    }
   });
 
   const server = app.listen(3001, function () {
-    console.log('ws listening on 3001');
+    console.log('server listening on 3001');
   });
 
   const wss = new WebSocket.Server({ server });
 
   wss.on('connection', (ws) => {
-    //connection is up, let's add a simple simple event
-    ws.on('message', (message) => {
-      //log the received message and send it back to the client
-      console.log('received: %s', message);
-      ws.send(`Hello, you sent -> ${message}`);
+    console.log('websocket connection opened');
+
+    ws.on('message', (msg) => {
+      currentNoteValue = msg;
+      wss.clients.forEach((client) => {
+        if (client !== ws && client.readyState === WebSocket.OPEN) {
+          client.send(msg);
+        }
+      });
     });
 
-    //send immediatly a feedback to the incoming connection
-    ws.send('Hi there, I am a WebSocket server');
+    ws.on('close', async (ws) => {
+      console.log('websocket connection closed');
+      if (wss.clients.size === 0) {
+        try {
+          dbWritePromise = saveNoteToDb();
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    });
+
+    async function saveNoteToDb() {
+      const documentCount = await noteCollection.estimatedDocumentCount();
+      const value = currentNoteValue;
+      currentNoteValue = '';
+      if (documentCount === 0) {
+        return noteCollection.insertOne({ value });
+      }
+      const filter = { _id: currentNoteId };
+      const update = { $set: { value } };
+      return await noteCollection.updateOne(filter, update);
+    }
   });
 });
