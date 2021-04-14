@@ -1,13 +1,13 @@
 require('dotenv').config();
-const WebSocket = require('ws');
+const { v4: uuidv4 } = require('uuid');
 const express = require('express');
+const cors = require('cors');
 const MongoClient = require('mongodb').MongoClient;
 
 const dbUri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.ucwi3.mongodb.net/test?retryWrites=true&w=majority`;
 const client = new MongoClient(dbUri, { useNewUrlParser: true, useUnifiedTopology: true });
 
-let currentNoteValue = null;
-let currentNoteId = '';
+let roomNoteCache = {};
 let dbWritePromise;
 
 client.connect((err) => {
@@ -16,19 +16,32 @@ client.connect((err) => {
   const db = client.db('sharenotes');
   const noteCollection = db.collection('notes');
 
+  // Express.js
+
   const app = express();
   app.use(express.json());
+  app.use(cors());
+
+  app.post('/create', async (req, res) => {
+    try {
+      const noteId = uuidv4();
+      const newNote = { noteId, value: '' };
+      await noteCollection.insertOne(newNote);
+      res.send({ noteId });
+    } catch (err) {
+      console.error(err);
+    }
+  });
 
   app.get('/', async (req, res) => {
-    // TODO: find the correct document when we have more than one
     try {
-      await dbWritePromise;
-      const notes = await noteCollection.find().toArray();
-      if (notes.length) {
-        currentNoteId = notes[0]._id;
-        currentNoteValue = currentNoteValue || notes[0].value;
-      }
-      res.send({ value: currentNoteValue });
+      await dbWritePromise; // wait for db write to finish before querying db
+
+      const noteId = req.query.noteId;
+      const savedNote = await noteCollection.findOne({ noteId });
+      const noteValue = roomNoteCache[noteId] || savedNote.value || '';
+      roomNoteCache[noteId] = noteValue;
+      res.send({ value: noteValue });
     } catch (err) {
       console.error(err);
     }
@@ -38,41 +51,42 @@ client.connect((err) => {
     console.log('server listening on 3001');
   });
 
-  const wss = new WebSocket.Server({ server });
+  // Socket.io
 
-  wss.on('connection', (ws) => {
+  const ioOptions = {
+    transports: ['websocket'],
+    cors: { origin: '*', methods: ['GET', 'POST'] },
+  };
+  const io = require('socket.io')(server, ioOptions);
+
+  io.on('connection', (socket) => {
     console.log('websocket connection opened');
 
-    ws.on('message', (msg) => {
-      currentNoteValue = msg;
-      wss.clients.forEach((client) => {
-        if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(msg);
-        }
-      });
+    const noteId = socket.handshake.query.noteId;
+    socket.join(noteId);
+
+    socket.on('message', (msg) => {
+      roomNoteCache[noteId] = msg;
+      socket.to(noteId).emit('message', msg);
     });
 
-    ws.on('close', async (ws) => {
+    socket.on('disconnect', async (ws) => {
       console.log('websocket connection closed');
-      if (wss.clients.size === 0) {
+
+      if (!io.sockets.adapter.rooms.get(noteId)) {
+        console.log('no more users on:', noteId);
         try {
-          dbWritePromise = saveNoteToDb();
+          dbWritePromise = saveNoteToDb(noteId);
         } catch (err) {
           console.error(err);
         }
       }
     });
-
-    async function saveNoteToDb() {
-      const documentCount = await noteCollection.estimatedDocumentCount();
-      const value = currentNoteValue;
-      currentNoteValue = '';
-      if (documentCount === 0) {
-        return noteCollection.insertOne({ value });
-      }
-      const filter = { _id: currentNoteId };
-      const update = { $set: { value } };
-      return await noteCollection.updateOne(filter, update);
-    }
   });
+
+  async function saveNoteToDb(noteId) {
+    const value = roomNoteCache[noteId];
+    delete roomNoteCache[noteId];
+    return await noteCollection.updateOne({ noteId }, { $set: { value } });
+  }
 });
