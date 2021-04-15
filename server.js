@@ -55,7 +55,7 @@ client.connect((err) => {
 
   const ioOptions = {
     transports: ['websocket'],
-    cors: { origin: '*', methods: ['GET', 'POST'] },
+    //cors: { origin: '*', methods: ['GET', 'POST'] },
   };
   const io = require('socket.io')(server, ioOptions);
 
