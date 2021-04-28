@@ -16,7 +16,7 @@ client.connect((err) => {
   const db = client.db('sharenotes');
   const noteCollection = db.collection('notes');
 
-  // Express.js
+  //// Express.js
 
   const app = express();
   app.use(express.json());
@@ -51,16 +51,12 @@ client.connect((err) => {
     console.log('server listening on 3001');
   });
 
-  // Socket.io
+  //// Socket.io
 
-  const ioOptions = {
-    transports: ['websocket'],
-    //cors: { origin: '*', methods: ['GET', 'POST'] },
-  };
-  const io = require('socket.io')(server, ioOptions);
+  const io = require('socket.io')(server, { transports: ['websocket']});
 
   io.on('connection', (socket) => {
-    console.log('websocket connection opened');
+    console.log('socket opened');
 
     const noteId = socket.handshake.query.noteId;
     socket.join(noteId);
@@ -71,9 +67,10 @@ client.connect((err) => {
     });
 
     socket.on('disconnect', async (ws) => {
-      console.log('websocket connection closed');
+      console.log('socket closed');
 
-      if (!io.sockets.adapter.rooms.get(noteId)) {
+      const doesRoomExist = io.sockets.adapter.rooms.get(noteId);
+      if (!doesRoomExist) {
         console.log('no more users on:', noteId);
         try {
           dbWritePromise = saveNoteToDb(noteId);
