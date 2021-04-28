@@ -5,7 +5,10 @@ const cors = require('cors');
 const MongoClient = require('mongodb').MongoClient;
 
 const dbUri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.ucwi3.mongodb.net/test?retryWrites=true&w=majority`;
-const client = new MongoClient(dbUri, { useNewUrlParser: true, useUnifiedTopology: true });
+const client = new MongoClient(dbUri, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
 
 let roomNoteCache = {};
 let dbWritePromise;
@@ -53,7 +56,11 @@ client.connect((err) => {
 
   //// Socket.io
 
-  const io = require('socket.io')(server, { transports: ['websocket']});
+  const ioOptions = {
+    transports: ['websocket'],
+    cors: { origin: '*', methods: ['GET', 'POST'] },
+  };
+  const io = require('socket.io')(server, ioOptions);
 
   io.on('connection', (socket) => {
     console.log('socket opened');
