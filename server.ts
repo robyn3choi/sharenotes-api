@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { MongoClient, UpdateWriteOpResult } from 'mongodb';
 import { v4 as uuidv4 } from 'uuid';
-import SocketManager from './SocketManager';
+import SocketService from './SocketService';
 
 dotenv.config();
 
@@ -63,5 +63,6 @@ client.connect((err) => {
     return await noteCollection.updateOne({ noteId }, { $set: { value } });
   }
 
-  new SocketManager(server, roomNoteCache, saveNoteToDb);
+  const socketService = new SocketService(server, roomNoteCache, saveNoteToDb);
+  socketService.initializeServer();
 });
